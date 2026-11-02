@@ -1,6 +1,6 @@
 // Guarda la app en el celu para que abra rápido y sin internet.
 // Cambiá la versión cada vez que subas cambios a GitHub.
-const CACHE = 'gastos-v1';
+const CACHE = 'gastos-v2';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

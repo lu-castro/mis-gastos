@@ -88,12 +88,12 @@
   <!-- AJUSTES -->
   <section class="view" id="view-ajustes" hidden>
     <div class="card">
-      <h2>Backup en GitHub</h2>
-      <p class="muted">Guarda una copia de tus datos en un <i>Gist secreto</i> de tu cuenta de GitHub. Así no se pierden si cambiás de celu y podés usar la app en varios dispositivos.</p>
+      <h2>Sincronizar con GitHub</h2>
+      <p class="muted">Guarda tus datos en un <i>Gist secreto</i> de tu cuenta de GitHub. Conectá la compu y el celu con tu token y lo que cargues en uno aparece en el otro.</p>
       <label class="label" for="ghToken">Token de GitHub (permiso "gist")</label>
       <input id="ghToken" type="password" autocomplete="off" placeholder="ghp_...">
-      <label class="label" for="ghGist">ID del Gist (se completa solo la primera vez)</label>
-      <input id="ghGist" type="text" autocomplete="off" placeholder="vacío = crear uno nuevo">
+      <label class="label" for="ghGist">ID del Gist (se completa solo)</label>
+      <input id="ghGist" type="text" autocomplete="off" placeholder="dejalo vacío">
       <div class="row">
         <button class="btn primary grow" id="ghSave">Conectar</button>
         <button class="btn ghost" id="ghDisconnect">Desconectar</button>

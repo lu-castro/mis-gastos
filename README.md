@@ -30,17 +30,24 @@ Es 100% gratis: se publica con GitHub Pages y los datos quedan guardados en el c
 - **Android (Chrome)**: abrí el link → menú ⋮ → **Agregar a la pantalla principal** / **Instalar app**.
 - **iPhone (Safari)**: abrí el link → botón compartir → **Agregar a inicio**.
 
-## Backup en GitHub (opcional, recomendado)
+## Sincronizar compu y celu (gratis, con GitHub)
 
-Así no perdés los datos si cambiás o perdés el celu.
+Lo que cargues en un dispositivo aparece en el otro, y no perdés nada si cambiás de celu.
+Los datos se guardan en un Gist secreto de tu cuenta de GitHub.
+
+Hacé esto **en cada dispositivo** (compu y celu), entrando a GitHub desde ese dispositivo:
 
 1. Entrá a https://github.com/settings/tokens/new (token "classic").
-2. Nombre: `mis-gastos`. Vencimiento: el que quieras. Tildá **solo** el permiso `gist`.
-3. Generá el token, copialo y pegalo en la app en **Ajustes → Backup en GitHub → Conectar**.
-4. La app crea un Gist secreto con tus datos y lo actualiza sola cada vez que cargás algo.
-   Para usarla en otro dispositivo, pegá el mismo token y el **ID del Gist** que aparece en Ajustes.
+2. Nombre: `mis-gastos compu` (o `mis-gastos celu`). Vencimiento: **No expiration**.
+   Tildá **solo** el permiso `gist`.
+3. Tocá **Generate token** y copiá el código que empieza con `ghp_`.
+4. En la app: **Ajustes → Sincronizar con GitHub**, pegá el token y tocá **Conectar**.
 
-El token queda guardado solo en tu celu. No lo compartas con nadie.
+El primer dispositivo crea el backup; el segundo lo encuentra solo y junta los datos de los dos.
+Después se sincroniza sola: al cargar algo, al abrir la app y cada minuto mientras está abierta.
+Si cargás algo sin internet, se sube cuando vuelve la conexión.
+
+El token queda guardado solo en ese dispositivo. No lo compartas con nadie.
 
 ## Actualizar la app
 

@@ -4,6 +4,7 @@
 const STORE_KEY = 'gastos-data-v1';
 const GH_KEY = 'gastos-github-v1';
 const GIST_FILE = 'gastos.json';
+const GIST_DESC = 'Backup app Mis Gastos';
 
 const DEFAULT_CATS = ['ALIMENTO', 'SERVICIO', 'SALUD', 'TRANSPORTE', 'HOGAR', 'OCIO', 'ESTÉTICA', 'REGALO', 'MONOTRIBUTO', 'OTRO'];
 const PALETTE = ['#1f7a5a', '#2f6fb5', '#c0392b', '#d98c1f', '#7b4fb0', '#16a2a6', '#c2457a', '#6b8e23', '#8a6d3b', '#5f6b73', '#e05d2b', '#3d5a99'];
@@ -18,6 +19,8 @@ function emptyData() {
       { id: uid(), nombre: 'LEMON', monto: 0, moneda: 'USD' },
       { id: uid(), nombre: 'UPWORK', monto: 0, moneda: 'USD' },
     ],
+    borrados: {},
+    catsMod: 0,
     updatedAt: 0,
   };
 }
@@ -39,25 +42,70 @@ function normalize(d) {
     categorias: Array.isArray(d.categorias) && d.categorias.length ? d.categorias : base.categorias,
     meses: d.meses && typeof d.meses === 'object' ? d.meses : {},
     ahorros: Array.isArray(d.ahorros) ? d.ahorros : base.ahorros,
+    borrados: d.borrados && typeof d.borrados === 'object' ? d.borrados : {},
+    catsMod: Number(d.catsMod) || 0,
     updatedAt: Number(d.updatedAt) || 0,
   };
 }
 
+// Combina los datos de dos dispositivos: se queda con la versión más nueva de cada
+// gasto/ingreso/ahorro y respeta lo que se borró en cualquiera de los dos.
+function mergeData(a, b) {
+  const out = emptyData();
+  out.borrados = { ...a.borrados };
+  for (const [id, t] of Object.entries(b.borrados)) out.borrados[id] = Math.max(out.borrados[id] || 0, t);
+  const pick = list => {
+    const byId = new Map();
+    for (const it of list) {
+      if (out.borrados[it.id]) continue;
+      const prev = byId.get(it.id);
+      if (!prev || (it.mod || 0) > (prev.mod || 0)) byId.set(it.id, it);
+    }
+    return [...byId.values()].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  };
+  const flat = (src, field) => Object.entries(src.meses).flatMap(([k, m]) => (m[field] || []).map(it => ({ it, k })));
+  const keyed = list => pick(list.map(({ it, k }) => ({ ...it, _mes: k })));
+
+  const mes = k => out.meses[k] || (out.meses[k] = { ingresos: [], gastos: [], nota: '', notaMod: 0 });
+  for (const k of new Set([...Object.keys(a.meses), ...Object.keys(b.meses)])) {
+    const ma = a.meses[k], mb = b.meses[k];
+    const src = !ma ? mb : !mb ? ma : (mb.notaMod || 0) > (ma.notaMod || 0) ? mb : ma;
+    if (src.nota) Object.assign(mes(k), { nota: src.nota, notaMod: src.notaMod || 0 });
+  }
+  // Los gastos van al mes de su fecha (por si se movieron de mes en otro dispositivo)
+  for (const g of keyed(flat(a, 'gastos').concat(flat(b, 'gastos')))) {
+    const { _mes, ...rest } = g; mes(g.fecha ? g.fecha.slice(0, 7) : _mes).gastos.push(rest);
+  }
+  for (const i of keyed(flat(a, 'ingresos').concat(flat(b, 'ingresos')))) {
+    const { _mes, ...rest } = i; mes(_mes).ingresos.push(rest);
+  }
+  out.ahorros = pick(a.ahorros.concat(b.ahorros));
+  const cats = b.catsMod > a.catsMod ? b : a;
+  out.categorias = cats.categorias.slice(); out.catsMod = cats.catsMod;
+  out.updatedAt = Math.max(a.updatedAt, b.updatedAt);
+  return out;
+}
+const fingerprint = d => JSON.stringify({ ...d, updatedAt: 0 });
+
 let data = loadLocal();
 let current = monthKey(new Date());
 
+function persistLocal() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { toast('No se pudo guardar en el celu'); }
+}
 function save({ sync = true } = {}) {
   data.updatedAt = Date.now();
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { toast('No se pudo guardar en el celu'); }
+  persistLocal();
   if (sync) schedulePush();
   render();
 }
+function markDeleted(id) { data.borrados[id] = Date.now(); }
 
 function month(key = current) {
-  if (!data.meses[key]) data.meses[key] = { ingresos: [], gastos: [], nota: '' };
+  if (!data.meses[key]) data.meses[key] = { ingresos: [], gastos: [], nota: '', notaMod: 0 };
   return data.meses[key];
 }
-function peekMonth(key) { return data.meses[key] || { ingresos: [], gastos: [], nota: '' }; }
+function peekMonth(key) { return data.meses[key] || { ingresos: [], gastos: [], nota: '', notaMod: 0 }; }
 
 // ---------- Fechas y números ----------
 function monthKey(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
@@ -295,7 +343,7 @@ function gastoSheet(g) {
       if (!(monto > 0)) return toast('Poné un monto válido');
       const fecha = $('#fFecha').value || defaultDateFor(current);
       const item = {
-        id: g.id || uid(), creado: g.creado || Date.now(),
+        id: g.id || uid(), creado: g.creado || Date.now(), mod: Date.now(),
         fecha, categoria: selectedCat() || 'OTRO', monto,
         nota: $('#fNota').value.trim(), fijo: $('#fFijo').checked,
       };
@@ -309,7 +357,7 @@ function gastoSheet(g) {
     },
     onDelete: isNew ? null : () => {
       if (!confirm('¿Borrar este gasto?')) return;
-      removeGasto(g.id); closeSheet(); save(); toast('Gasto borrado');
+      removeGasto(g.id); markDeleted(g.id); closeSheet(); save(); toast('Gasto borrado');
     },
   });
 }
@@ -336,14 +384,14 @@ function ingresoSheet(i) {
       if (!fuente) return toast('Poné de dónde viene');
       if (!(monto >= 0)) return toast('Poné un monto válido');
       const m = month();
-      const item = { id: i.id || uid(), fuente, monto, moneda: $('#iMoneda').value };
+      const item = { id: i.id || uid(), mod: Date.now(), fuente, monto, moneda: $('#iMoneda').value };
       const idx = m.ingresos.findIndex(x => x.id === item.id);
       if (idx >= 0) m.ingresos[idx] = item; else m.ingresos.push(item);
       closeSheet(); save();
     },
     onDelete: isNew ? null : () => {
       if (!confirm('¿Borrar este ingreso?')) return;
-      const m = month(); m.ingresos = m.ingresos.filter(x => x.id !== i.id); closeSheet(); save();
+      const m = month(); m.ingresos = m.ingresos.filter(x => x.id !== i.id); markDeleted(i.id); closeSheet(); save();
     },
   });
 }
@@ -366,14 +414,14 @@ function ahorroSheet(a) {
       const nombre = $('#aNombre').value.trim();
       if (!nombre) return toast('Poné un nombre');
       if (!(monto >= 0)) return toast('Poné un monto válido');
-      const item = { id: a.id || uid(), nombre, monto, moneda: $('#aMoneda').value };
+      const item = { id: a.id || uid(), mod: Date.now(), nombre, monto, moneda: $('#aMoneda').value };
       const idx = data.ahorros.findIndex(x => x.id === item.id);
       if (idx >= 0) data.ahorros[idx] = item; else data.ahorros.push(item);
       closeSheet(); save();
     },
     onDelete: isNew ? null : () => {
       if (!confirm('¿Borrar esta cuenta?')) return;
-      data.ahorros = data.ahorros.filter(x => x.id !== a.id); closeSheet(); save();
+      data.ahorros = data.ahorros.filter(x => x.id !== a.id); markDeleted(a.id); closeSheet(); save();
     },
   });
 }
@@ -383,7 +431,7 @@ function copyIngresos() {
   const prev = peekMonth(shiftMonth(current, -1));
   if (!prev.ingresos.length) return toast('El mes anterior no tiene ingresos');
   const m = month();
-  for (const i of prev.ingresos) m.ingresos.push({ ...i, id: uid() });
+  for (const i of prev.ingresos) m.ingresos.push({ ...i, id: uid(), mod: Date.now() });
   save(); toast('Ingresos copiados: revisá los montos');
 }
 function copyFijos() {
@@ -394,7 +442,7 @@ function copyFijos() {
   const dim = daysInMonth(current);
   for (const g of fijos) {
     const day = Math.min(Number(g.fecha.slice(8, 10)), dim);
-    m.gastos.push({ ...g, id: uid(), creado: Date.now(), fecha: current + '-' + String(day).padStart(2, '0') });
+    m.gastos.push({ ...g, id: uid(), creado: Date.now(), mod: Date.now(), fecha: current + '-' + String(day).padStart(2, '0') });
   }
   save(); toast(fijos.length + ' gastos fijos copiados');
 }
@@ -448,6 +496,7 @@ async function gh(path, opts = {}) {
   const { token } = ghConfig();
   const res = await fetch('https://api.github.com' + path, {
     ...opts,
+    cache: 'no-store',
     headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
   });
   if (!res.ok) {
@@ -466,52 +515,55 @@ async function pullRemote() {
   return normalize(JSON.parse(content));
 }
 
-let pushTimer = null, pushing = false, pendingPush = false;
+let pushTimer = null, syncing = false, pendingPush = false;
 function schedulePush() {
-  const c = ghConfig();
-  if (!c.token) return;
+  if (!ghConfig().token) return;
   pendingPush = true;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(pushRemote, 1500);
+  pushTimer = setTimeout(syncNow, 1500);
 }
-async function pushRemote() {
+
+// Baja lo que hay en GitHub, lo combina con lo de este dispositivo y sube el resultado.
+async function syncNow() {
   const c = ghConfig();
-  if (!c.token || pushing) return;
-  if (!navigator.onLine) { ghStatus('Sin conexión: se sube cuando vuelva internet.'); return; }
-  pushing = true; pendingPush = false;
-  const body = { files: { [GIST_FILE]: { content: JSON.stringify(data) } } };
+  if (!c.token) return;
+  if (syncing) { pendingPush = true; return; }
+  if (!navigator.onLine) { ghStatus('Sin conexión: se sincroniza cuando vuelva internet.'); return; }
+  syncing = true; pendingPush = false;
+  let failed = false;
   try {
-    if (c.gistId) {
-      await gh('/gists/' + c.gistId, { method: 'PATCH', body: JSON.stringify(body) });
-    } else {
-      const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ ...body, public: false, description: 'Backup app Mis Gastos' }) });
+    // En un dispositivo nuevo, buscar el backup que ya creó el otro
+    if (!c.gistId) {
+      const gists = await gh('/gists?per_page=100');
+      const found = gists.find(g => g.description === GIST_DESC && g.files && g.files[GIST_FILE]);
+      if (found) { c.gistId = found.id; setGhConfig(c); if (view === 'ajustes') renderAjustes(); }
+    }
+    const remote = c.gistId ? await pullRemote() : null;
+    if (remote) {
+      const before = fingerprint(data);
+      data = mergeData(data, remote);
+      persistLocal();
+      if (fingerprint(data) !== before) render();
+    }
+    const content = JSON.stringify(data);
+    const body = { files: { [GIST_FILE]: { content } } };
+    if (!c.gistId) {
+      const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ ...body, public: false, description: GIST_DESC }) });
       setGhConfig({ ...c, gistId: g.id });
       if (view === 'ajustes') renderAjustes();
+    } else if (!remote || fingerprint(mergeData(remote, remote)) !== fingerprint(data)) {
+      await gh('/gists/' + c.gistId, { method: 'PATCH', body: JSON.stringify(body) });
     }
     ghStatus('✓ Sincronizado ' + new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }));
   } catch (e) {
-    pendingPush = true;
-    ghStatus(e.status === 401 ? 'El token no es válido o venció.' : 'No se pudo sincronizar (' + (e.status || 'sin red') + '). Reintento después.');
+    pendingPush = true; failed = true;
+    ghStatus(e.status === 401 ? 'El token no es válido o venció.'
+      : e.status === 404 ? 'No encontré ese Gist. Revisá el ID.'
+      : 'No se pudo sincronizar (' + (e.status || 'sin red') + '). Reintento después.');
   } finally {
-    pushing = false;
-  }
-}
-
-async function syncOnStart() {
-  const c = ghConfig();
-  if (!c.token || !c.gistId || !navigator.onLine) return;
-  try {
-    const remote = await pullRemote();
-    if (remote && remote.updatedAt > data.updatedAt) {
-      data = remote;
-      try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* ignore */ }
-      render(); toast('Datos actualizados desde GitHub');
-    } else if (!remote || remote.updatedAt < data.updatedAt) {
-      schedulePush();
-    }
-    ghStatus('✓ Sincronizado');
-  } catch (e) {
-    ghStatus('No se pudo leer el backup de GitHub (' + (e.status || 'sin red') + ').');
+    syncing = false;
+    // Si se cargó algo mientras sincronizaba, subirlo. Si falló, reintenta al minuto o al volver internet.
+    if (pendingPush && !failed) schedulePush();
   }
 }
 
@@ -521,20 +573,7 @@ async function connectGithub() {
   if (!token) return toast('Pegá tu token de GitHub');
   setGhConfig({ token, gistId });
   ghStatus('Conectando…');
-  try {
-    if (gistId) {
-      const remote = await pullRemote();
-      if (remote && remote.updatedAt > data.updatedAt &&
-          confirm('Hay datos en GitHub más nuevos que los de este celu. ¿Usar los de GitHub?')) {
-        data = remote;
-        try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* ignore */ }
-        render(); ghStatus('✓ Datos traídos de GitHub'); return;
-      }
-    }
-    await pushRemote();
-  } catch (e) {
-    ghStatus(e.status === 401 ? 'El token no es válido.' : e.status === 404 ? 'No encontré ese Gist.' : 'Error al conectar.');
-  }
+  await syncNow();
 }
 
 // ---------- Eventos ----------
@@ -572,7 +611,7 @@ let noteTimer;
 $('#monthNote').oninput = e => {
   autoGrow(e.target);
   clearTimeout(noteTimer);
-  noteTimer = setTimeout(() => { month().nota = e.target.value; save(); }, 600);
+  noteTimer = setTimeout(() => { Object.assign(month(), { nota: e.target.value, notaMod: Date.now() }); save(); }, 600);
 };
 
 $('#sheet').onsubmit = e => { e.preventDefault(); if (sheetSubmit) sheetSubmit(); };
@@ -588,14 +627,14 @@ $('#addCat').onclick = () => {
   const v = $('#newCat').value.trim().toUpperCase();
   if (!v) return;
   if (data.categorias.includes(v)) return toast('Esa categoría ya existe');
-  data.categorias.push(v); $('#newCat').value = ''; save();
+  data.categorias.push(v); data.catsMod = Date.now(); $('#newCat').value = ''; save();
 };
 $('#catsEdit').onclick = e => {
   const el = e.target.closest('[data-delcat]'); if (!el) return;
   const c = el.dataset.delcat;
   if (data.categorias.length <= 1) return toast('Tiene que quedar al menos una');
   if (!confirm('¿Sacar la categoría "' + c + '"? Los gastos ya cargados la conservan.')) return;
-  data.categorias = data.categorias.filter(x => x !== c); save();
+  data.categorias = data.categorias.filter(x => x !== c); data.catsMod = Date.now(); save();
 };
 
 $('#ghSave').onclick = connectGithub;
@@ -607,14 +646,16 @@ $('#exportCsv').onclick = exportCsv;
 $('#exportJson').onclick = exportJson;
 $('#importJson').onchange = e => { if (e.target.files[0]) importJson(e.target.files[0]); e.target.value = ''; };
 
-window.addEventListener('online', () => { if (pendingPush) pushRemote(); });
+window.addEventListener('online', syncNow);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { render(); syncOnStart(); }
+  if (document.visibilityState === 'visible') { render(); syncNow(); }
 });
+// Mientras la app está abierta, trae cada minuto lo cargado en el otro dispositivo
+setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60000);
 
 // ---------- Inicio ----------
 setView('gastos');
-syncOnStart();
+syncNow();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
