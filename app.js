@@ -21,6 +21,9 @@ function emptyData() {
     ],
     borrados: {},
     catsMod: 0,
+    config: {},
+    informes: {},
+    pasos: [],
     updatedAt: 0,
   };
 }
@@ -44,6 +47,9 @@ function normalize(d) {
     ahorros: Array.isArray(d.ahorros) ? d.ahorros : base.ahorros,
     borrados: d.borrados && typeof d.borrados === 'object' ? d.borrados : {},
     catsMod: Number(d.catsMod) || 0,
+    config: d.config && typeof d.config === 'object' ? d.config : {},
+    informes: d.informes && typeof d.informes === 'object' ? d.informes : {},
+    pasos: Array.isArray(d.pasos) ? d.pasos : [],
     updatedAt: Number(d.updatedAt) || 0,
   };
 }
@@ -82,6 +88,12 @@ function mergeData(a, b) {
   out.ahorros = pick(a.ahorros.concat(b.ahorros));
   const cats = b.catsMod > a.catsMod ? b : a;
   out.categorias = cats.categorias.slice(); out.catsMod = cats.catsMod;
+  out.config = { ...((b.config.configMod || 0) > (a.config.configMod || 0) ? b.config : a.config) };
+  out.pasos = pick(a.pasos.concat(b.pasos));
+  for (const k of [...new Set([...Object.keys(a.informes), ...Object.keys(b.informes)])].sort()) {
+    const ia = a.informes[k], ib = b.informes[k];
+    out.informes[k] = !ia ? ib : !ib ? ia : (ib.mod || 0) > (ia.mod || 0) ? ib : ia;
+  }
   out.updatedAt = Math.max(a.updatedAt, b.updatedAt);
   return out;
 }
@@ -267,6 +279,7 @@ function renderResumen(m, t) {
     const tt = totals(k);
     return `<div class="hist-row"><span>${esc(monthName(k))}<small>Gastado ${money(tt.gastado)}</small></span><b class="${tt.restante < 0 ? 'neg' : ''}">${money(tt.restante)}</b></div>`;
   }).join('') : '<p class="muted">Todavía no hay meses con datos.</p>';
+  renderPlanInformes();
 }
 
 function renderIngresos(m) {
@@ -292,9 +305,14 @@ function renderAjustes() {
   const gh = ghConfig();
   if (document.activeElement !== $('#ghToken')) $('#ghToken').value = gh.token || '';
   if (document.activeElement !== $('#ghGist')) $('#ghGist').value = gh.gistId || '';
+  renderAjustesAsesor();
 }
 
-function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+function autoGrow(el) {
+  el.style.height = 'auto';
+  if (el.value && el.offsetParent) el.style.height = el.scrollHeight + 'px';
+}
+window.addEventListener('resize', () => autoGrow($('#monthNote')));
 
 function setView(v) {
   view = v;
@@ -352,8 +370,9 @@ function gastoSheet(g) {
       const key = fecha.slice(0, 7);
       month(key).gastos.push(item);
       if (key !== current) { current = key; toast('Guardado en ' + monthName(key)); }
-      else toast(isNew ? 'Gasto cargado' : 'Gasto actualizado');
+      else if (!isNew) toast('Gasto actualizado');
       closeSheet(); save();
+      if (isNew) hablar([reaccionGasto(item)], { auto: true });
     },
     onDelete: isNew ? null : () => {
       if (!confirm('¿Borrar este gasto?')) return;
@@ -543,7 +562,7 @@ async function syncNow() {
       const before = fingerprint(data);
       data = mergeData(data, remote);
       persistLocal();
-      if (fingerprint(data) !== before) render();
+      if (fingerprint(data) !== before) { checkInformes(); render(); }
     }
     const content = JSON.stringify(data);
     const body = { files: { [GIST_FILE]: { content } } };
@@ -655,7 +674,12 @@ setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, 60
 
 // ---------- Inicio ----------
 setView('gastos');
-syncNow();
+initAsesor();
+// Antes de que hable el estratega, esperar (un poco) a tener los datos del otro dispositivo
+Promise.race([syncNow(), new Promise(r => setTimeout(r, 2500))]).then(() => {
+  checkInformes();
+  saludarSiCorresponde();
+});
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
