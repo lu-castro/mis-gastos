@@ -46,6 +46,16 @@
   <!-- RESUMEN -->
   <section class="view" id="view-resumen" hidden>
     <div class="card">
+      <h2>🦉 Tu plan de mejora</h2>
+      <div id="planList"></div>
+      <div id="planLogrados"></div>
+    </div>
+    <div class="card">
+      <h2>Informes de fin de mes</h2>
+      <div id="informesList"></div>
+      <button class="btn ghost full" id="informePreliminar">Ver cómo viene este mes</button>
+    </div>
+    <div class="card">
       <h2>Por categoría</h2>
       <div id="catBreakdown"></div>
     </div>
@@ -87,6 +97,12 @@
 
   <!-- AJUSTES -->
   <section class="view" id="view-ajustes" hidden>
+    <div class="card">
+      <h2>🦉 Tu estratega</h2>
+      <label class="label" for="metaAhorro">Meta de ahorro (% de tus ingresos)</label>
+      <input id="metaAhorro" type="number" inputmode="numeric" min="1" max="80" step="1">
+      <label class="check"><input id="hablarAlAbrir" type="checkbox"> Que Benito me hable al abrir la app</label>
+    </div>
     <div class="card">
       <h2>Sincronizar con GitHub</h2>
       <p class="muted">Guarda tus datos en un <i>Gist secreto</i> de tu cuenta de GitHub. Conectá la compu y el celu con tu token y lo que cargues en uno aparece en el otro.</p>
@@ -144,6 +160,16 @@
 
 <div class="toast" id="toast" hidden></div>
 
+<!-- Informe mensual -->
+<div class="panel" id="informePanel" hidden>
+  <div class="panel-top">
+    <b>Informe mensual</b>
+    <button class="nav-btn" id="informeCerrar" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="panel-body" id="informeBody"></div>
+</div>
+
+<script src="asesor.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

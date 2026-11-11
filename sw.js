@@ -1,6 +1,6 @@
 // Guarda la app en el celu para que abra rápido y sin internet.
 // Cambiá la versión cada vez que subas cambios a GitHub.
-const CACHE = 'gastos-v3';
+const CACHE = 'gastos-v4';
 const FILES = ['./', 'index.html', 'styles.css', 'asesor.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -16,7 +16,8 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache: pregunta siempre a GitHub si hay versión nueva (en vez de usar la copia del navegador)
+    fetch(e.request, { cache: 'no-cache' })
       .then(res => { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); return res; })
       .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
