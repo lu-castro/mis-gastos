@@ -4,7 +4,7 @@
 // Usa las funciones y datos de app.js (se carga antes, pero solo se llama después).
 
 const ASESOR_NOMBRE = 'Benito';
-const DEFAULT_CONFIG = { metaAhorro: 15, hablarAlAbrir: true };
+const DEFAULT_CONFIG = { metaAhorro: 15, abrirChatAlInicio: false };
 const MAX_PASOS_ACTIVOS = 5;
 
 function cfg() { return { ...DEFAULT_CONFIG, ...(data.config || {}) }; }
@@ -394,47 +394,32 @@ const BUHO_SVG = `
   </g>
 </svg>`;
 
-let cola = [], idx = 0, cierreAuto = null;
-
+// Benito no aparece solo: cuando tiene algo para decir, muestra un puntito y espera a que lo toques.
 function crearPersonaje() {
   const btn = document.createElement('button');
   btn.id = 'buho'; btn.className = 'buho'; btn.setAttribute('aria-label', 'Hablar con ' + ASESOR_NOMBRE);
-  btn.innerHTML = BUHO_SVG;
+  btn.innerHTML = BUHO_SVG + '<span class="buho-aviso" id="buhoAviso" hidden></span>';
   btn.dataset.mood = 'feliz';
-  btn.onclick = () => ($('#burbuja').hidden ? hablar(mensajesAlAbrir()) : callar());
-  const b = document.createElement('div');
-  b.id = 'burbuja'; b.className = 'burbuja'; b.hidden = true; b.setAttribute('role', 'status');
-  b.innerHTML = `<div class="burbuja-nombre">${ASESOR_NOMBRE} · tu estratega</div>
-    <div class="burbuja-texto" id="burbujaTexto"></div>
-    <div class="burbuja-pie">
-      <span class="burbuja-cont" id="burbujaCont"></span>
-      <button type="button" class="btn secondary" id="burbujaAccion" hidden></button>
-      <button type="button" class="btn primary" id="burbujaSig">Siguiente</button>
-    </div>`;
-  document.body.append(b, btn);
-  $('#burbujaSig').onclick = () => { idx++; idx < cola.length ? mostrar() : callar(); };
+  btn.onclick = () => abrirChat();
+  document.body.append(btn);
 }
 
-function hablar(msgs, { auto = false } = {}) {
-  if (!msgs.length) return;
-  cola = msgs; idx = 0;
-  clearTimeout(cierreAuto);
-  mostrar();
-  if (auto) cierreAuto = setTimeout(callar, 7000);
+function moodActual() {
+  const m = mensajesAlAbrir();
+  return m.some(x => x.mood === 'alerta') ? 'alerta' : m.some(x => x.mood === 'atento') ? 'atento' : 'feliz';
 }
-function mostrar() {
-  const m = cola[idx];
-  $('#buho').dataset.mood = m.mood || 'feliz';
-  $('#buho').classList.remove('saltito'); void $('#buho').offsetWidth; $('#buho').classList.add('saltito');
-  $('#burbujaTexto').innerHTML = m.texto;
-  $('#burbujaCont').textContent = cola.length > 1 ? `${idx + 1}/${cola.length}` : '';
-  $('#burbujaSig').textContent = idx < cola.length - 1 ? 'Siguiente' : 'Listo';
-  const acc = $('#burbujaAccion');
-  acc.hidden = !m.accion;
-  if (m.accion) { acc.textContent = m.accion.label; acc.onclick = () => { callar(); m.accion.fn(); }; }
-  $('#burbuja').hidden = false;
+
+// Puntito: hay un informe sin ver, un comentario guardado o todavía no hablaron hoy.
+function actualizarAviso() {
+  const aviso = $('#buhoAviso');
+  if (!aviso) return;
+  const n = chatPendientes.length + Object.values(data.informes).filter(i => !i.visto).length;
+  let hoy = null;
+  try { hoy = localStorage.getItem('benito-ultimo-dia'); } catch (e) { /* ignore */ }
+  aviso.hidden = !n && hoy === todayISO();
+  aviso.textContent = n ? String(n) : '';
+  $('#buho').dataset.mood = moodActual();
 }
-function callar() { clearTimeout(cierreAuto); $('#burbuja').hidden = true; }
 
 // ---------- Pantallas: plan, informes, ajustes ----------
 function renderPlanInformes() {
@@ -475,7 +460,7 @@ function renderPlanInformes() {
 function renderAjustesAsesor() {
   const c = cfg();
   if (document.activeElement !== $('#metaAhorro')) $('#metaAhorro').value = c.metaAhorro;
-  $('#hablarAlAbrir').checked = c.hablarAlAbrir;
+  $('#hablarAlAbrir').checked = c.abrirChatAlInicio;
 }
 
 function abrirInforme(key, { preliminar = false } = {}) {
@@ -535,20 +520,21 @@ function initAsesor() {
     p.estado = ok ? 'logrado' : 'descartado';
     if (ok) p.historial = { ...p.historial, [nowKey()]: true };
     p.mod = Date.now(); save();
-    if (ok) hablar([{ mood: 'feliz', texto: '¡Eso! Un hábito más en tu cuenta. 🏅' }], { auto: true });
+    if (ok) toast('¡Eso! Un hábito más en tu cuenta 🏅');
   };
   $('#metaAhorro').onchange = e => {
     const v = Math.round(Number(e.target.value));
     if (!(v >= 1 && v <= 80)) { toast('Poné un número entre 1 y 80'); return renderAjustesAsesor(); }
     setCfg({ metaAhorro: v }); toast('Meta de ahorro: ' + v + '%');
   };
-  $('#hablarAlAbrir').onchange = e => setCfg({ hablarAlAbrir: e.target.checked });
+  $('#hablarAlAbrir').onchange = e => setCfg({ abrirChatAlInicio: e.target.checked });
 }
 
 let ultimaVezOculta = 0;
+// Por defecto Benito solo avisa con el puntito; se abre solo únicamente si lo pediste en Ajustes.
 function saludarSiCorresponde() {
-  if (!cfg().hablarAlAbrir) return;
-  setTimeout(() => hablar(mensajesAlAbrir()), 700);
+  actualizarAviso();
+  if (cfg().abrirChatAlInicio) setTimeout(abrirChat, 700);
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') ultimaVezOculta = Date.now();

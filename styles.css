@@ -194,25 +194,52 @@ input:focus, select:focus { border-color: var(--primary); }
 @keyframes parpadeo { 0%, 94%, 100% { transform: scaleY(0); } 97% { transform: scaleY(1); } }
 @media (prefers-reduced-motion: reduce) { .buho, .buho.saltito, .buho .parpados rect { animation: none; } }
 
-.burbuja {
-  position: fixed; left: 12px; right: 12px; z-index: 9; max-width: 380px;
-  bottom: calc(150px + env(safe-area-inset-bottom));
-  background: var(--card); color: var(--text); border-radius: 18px; padding: 14px 16px 12px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.22); border: 2px solid #8b5e3c;
-  animation: aparecer .25s ease-out;
+/* Puntito de aviso: Benito tiene algo para contarte */
+.buho-aviso {
+  position: absolute; top: 2px; right: 2px; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 99px; background: var(--danger); color: #fff; border: 2px solid var(--bg);
+  font-size: .7rem; font-weight: 700; line-height: 16px; text-align: center;
+  animation: latido 2s ease-in-out infinite;
 }
-.burbuja::after {
-  content: ""; position: absolute; left: 30px; bottom: -11px; width: 18px; height: 18px;
-  background: var(--card); border-right: 2px solid #8b5e3c; border-bottom: 2px solid #8b5e3c;
-  transform: rotate(45deg);
+@keyframes latido { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+body.chat-abierto .buho:not(.chat-buho), body.chat-abierto .fab { display: none; }
+
+/* Chat con Benito */
+.chat-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 12; }
+.chat {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 13;
+  max-width: 560px; margin: 0 auto;
+  height: min(86vh, 720px); height: min(86dvh, 720px);
+  display: flex; flex-direction: column;
+  background: var(--bg); border-radius: 20px 20px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -8px 30px rgba(0,0,0,.2);
+  animation: subir .25s ease-out;
 }
-.burbuja-nombre { font-size: .72rem; font-weight: 700; color: #8b5e3c; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-.burbuja-texto { font-size: .95rem; line-height: 1.4; }
-.burbuja-pie { display: flex; align-items: center; gap: 8px; margin-top: 12px; justify-content: flex-end; }
-.burbuja-pie .btn { padding: 8px 14px; font-size: .85rem; }
-.burbuja-cont { margin-right: auto; font-size: .78rem; color: var(--muted); }
-@keyframes aparecer { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
-@media (prefers-color-scheme: dark) { .burbuja, .burbuja::after { border-color: #c99a6b; } .burbuja-nombre { color: #c99a6b; } }
+@keyframes subir { from { transform: translateY(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+.chat-top { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.buho.chat-buho { position: static; width: 46px; height: 46px; flex: none; animation: none; filter: none; }
+.chat-titulo { flex: 1; display: flex; flex-direction: column; line-height: 1.2; }
+.chat-titulo span { font-size: .78rem; color: var(--muted); }
+.chat-msgs { flex: 1; overflow-y: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.msg { max-width: 85%; padding: 10px 13px; border-radius: 16px; line-height: 1.4; font-size: .94rem; overflow-wrap: anywhere; }
+.msg.benito { align-self: flex-start; background: var(--card); border-bottom-left-radius: 4px; box-shadow: var(--shadow); }
+.msg.yo { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.msg small { color: var(--muted); }
+.msg-acc { display: block; margin-top: 8px; }
+.msg-acc:disabled { opacity: .5; }
+.escribiendo { display: flex; gap: 4px; padding: 14px; }
+.escribiendo span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: puntos 1s infinite; }
+.escribiendo span:nth-child(2) { animation-delay: .15s; }
+.escribiendo span:nth-child(3) { animation-delay: .3s; }
+@keyframes puntos { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+.chat-chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; scrollbar-width: none; }
+.chat-chips::-webkit-scrollbar { display: none; }
+.chat-chips .chip { white-space: nowrap; flex: none; background: var(--card); }
+.chat-form { display: flex; gap: 8px; padding: 8px 12px 12px; }
+.chat-form input { flex: 1; margin: 0; background: var(--card); }
+.chat-form .btn { padding: 12px 16px; }
+@media (prefers-reduced-motion: reduce) { .chat, .buho-aviso, .escribiendo span { animation: none; } }
 
 /* Plan de mejora */
 .paso { border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 10px; }

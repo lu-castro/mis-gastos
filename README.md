@@ -15,9 +15,11 @@ Es 100% gratis: se publica con GitHub Pages y los datos quedan guardados en el c
 - **Ahorro**: cuentas (USD, LEMON, UPWORK…) con el total.
 - **Copiar** ingresos y gastos fijos del mes anterior.
 - **Exportar** el mes a CSV (se abre en Excel) y backup completo en JSON.
-- **Benito, tu estratega** (el búho de abajo a la izquierda): al abrir la app te dice cómo
-  venís, cuánto podés gastar por día para cumplir tu meta de ahorro y qué está creciendo.
-  También comenta cada gasto que cargás. Tocalo cuando quieras para que te hable.
+- **Benito, tu estratega** (el búho de abajo a la izquierda): tocalo para chatear con él.
+  Preguntale cuánto podés gastar hoy, cuánto gastaste en algo, si te alcanza para una compra,
+  en qué se te va la plata, pedile un consejo o decile "gasté 5000 en café" y lo anota.
+  No aparece solo: cuando tiene algo para contarte, muestra un puntito rojo.
+  Entiende preguntas sobre tus gastos (no es una IA general) y no da consejos de inversión.
 - **Informe de fin de mes**: se arma solo cuando termina el mes, con lo que pasó y
   próximos pasos concretos. Los pasos se acumulan en **Resumen → Tu plan de mejora**:
   cada mes se evalúan (✅/❌) y, si cumplís uno dos meses seguidos, pasa a "hábito logrado".

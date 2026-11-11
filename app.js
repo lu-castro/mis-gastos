@@ -5,7 +5,7 @@ const STORE_KEY = 'gastos-data-v1';
 const GH_KEY = 'gastos-github-v1';
 const GIST_FILE = 'gastos.json';
 const GIST_DESC = 'Backup app Mis Gastos';
-const APP_VERSION = '5';
+const APP_VERSION = '6';
 
 const DEFAULT_CATS = ['ALIMENTO', 'SERVICIO', 'SALUD', 'TRANSPORTE', 'HOGAR', 'OCIO', 'ESTÉTICA', 'REGALO', 'MONOTRIBUTO', 'OTRO'];
 const PALETTE = ['#1f7a5a', '#2f6fb5', '#c0392b', '#d98c1f', '#7b4fb0', '#16a2a6', '#c2457a', '#6b8e23', '#8a6d3b', '#5f6b73', '#e05d2b', '#3d5a99'];
@@ -224,6 +224,7 @@ function render() {
   if (view === 'ingresos') renderIngresos(m);
   if (view === 'ahorro') renderAhorro();
   if (view === 'ajustes') renderAjustes();
+  actualizarAviso();
 }
 
 function renderGastos(m, t) {
@@ -373,9 +374,9 @@ function gastoSheet(g) {
       const key = fecha.slice(0, 7);
       month(key).gastos.push(item);
       if (key !== current) { current = key; toast('Guardado en ' + monthName(key)); }
-      else if (!isNew) toast('Gasto actualizado');
+      else toast(isNew ? 'Gasto cargado' : 'Gasto actualizado');
       closeSheet(); save();
-      if (isNew) hablar([reaccionGasto(item)], { auto: true });
+      if (isNew) guardarComentario(reaccionGasto(item));
     },
     onDelete: isNew ? null : () => {
       if (!confirm('¿Borrar este gasto?')) return;
