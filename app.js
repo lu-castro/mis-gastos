@@ -5,6 +5,7 @@ const STORE_KEY = 'gastos-data-v1';
 const GH_KEY = 'gastos-github-v1';
 const GIST_FILE = 'gastos.json';
 const GIST_DESC = 'Backup app Mis Gastos';
+const APP_VERSION = '5';
 
 const DEFAULT_CATS = ['ALIMENTO', 'SERVICIO', 'SALUD', 'TRANSPORTE', 'HOGAR', 'OCIO', 'ESTÉTICA', 'REGALO', 'MONOTRIBUTO', 'OTRO'];
 const PALETTE = ['#1f7a5a', '#2f6fb5', '#c0392b', '#d98c1f', '#7b4fb0', '#16a2a6', '#c2457a', '#6b8e23', '#8a6d3b', '#5f6b73', '#e05d2b', '#3d5a99'];
@@ -305,6 +306,8 @@ function renderAjustes() {
   const gh = ghConfig();
   if (document.activeElement !== $('#ghToken')) $('#ghToken').value = gh.token || '';
   if (document.activeElement !== $('#ghGist')) $('#ghGist').value = gh.gistId || '';
+  $('#ghInfo').textContent = 'Versión de la app: ' + APP_VERSION +
+    (gh.gistId ? ' · Código de tu backup: ' + gh.gistId.slice(-5).toUpperCase() : ' · Sin conectar');
   renderAjustesAsesor();
 }
 
@@ -525,8 +528,7 @@ async function gh(path, opts = {}) {
   return res.json();
 }
 
-async function pullRemote() {
-  const { gistId } = ghConfig();
+async function pullGist(gistId) {
   const gist = await gh('/gists/' + gistId);
   const f = gist.files && gist.files[GIST_FILE];
   if (!f) return null;
@@ -534,7 +536,25 @@ async function pullRemote() {
   return normalize(JSON.parse(content));
 }
 
-let pushTimer = null, syncing = false, pendingPush = false;
+// Si cada dispositivo creó su propio backup, los junta todos en el más viejo
+// y deja a este dispositivo usando ese. Así compu y celu terminan en el mismo.
+async function unificarGists(c) {
+  const gists = await gh('/gists?per_page=100');
+  const mios = gists.filter(g => g.description === GIST_DESC && g.files && g.files[GIST_FILE])
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  if (!mios.length) return;
+  const principal = mios[0].id;
+  for (const g of mios.slice(1)) {
+    const otro = await pullGist(g.id);
+    if (otro) data = mergeData(data, otro);
+  }
+  if (c.gistId !== principal) {
+    c.gistId = principal; setGhConfig(c);
+    if (view === 'ajustes') renderAjustes();
+  }
+}
+
+let pushTimer = null, syncing = false, pendingPush = false, unificado = false;
 function schedulePush() {
   if (!ghConfig().token) return;
   pendingPush = true;
@@ -551,19 +571,12 @@ async function syncNow() {
   syncing = true; pendingPush = false;
   let failed = false;
   try {
-    // En un dispositivo nuevo, buscar el backup que ya creó el otro
-    if (!c.gistId) {
-      const gists = await gh('/gists?per_page=100');
-      const found = gists.find(g => g.description === GIST_DESC && g.files && g.files[GIST_FILE]);
-      if (found) { c.gistId = found.id; setGhConfig(c); if (view === 'ajustes') renderAjustes(); }
-    }
-    const remote = c.gistId ? await pullRemote() : null;
-    if (remote) {
-      const before = fingerprint(data);
-      data = mergeData(data, remote);
-      persistLocal();
-      if (fingerprint(data) !== before) { checkInformes(); render(); }
-    }
+    const before = fingerprint(data);
+    // Al abrir la app (y al conectar): encontrar el backup compartido y juntar duplicados
+    if (!c.gistId || !unificado) { await unificarGists(c); unificado = true; }
+    const remote = c.gistId ? await pullGist(c.gistId) : null;
+    if (remote) data = mergeData(data, remote);
+    if (fingerprint(data) !== before) { persistLocal(); checkInformes(); render(); }
     const content = JSON.stringify(data);
     const body = { files: { [GIST_FILE]: { content } } };
     if (!c.gistId) {
@@ -592,6 +605,7 @@ async function connectGithub() {
   if (!token) return toast('Pegá tu token de GitHub');
   setGhConfig({ token, gistId });
   ghStatus('Conectando…');
+  unificado = false;
   await syncNow();
 }
 
@@ -657,6 +671,10 @@ $('#catsEdit').onclick = e => {
 };
 
 $('#ghSave').onclick = connectGithub;
+$('#ghSyncNow').onclick = () => {
+  if (!ghConfig().token) return toast('Primero conectá tu token');
+  ghStatus('Sincronizando…'); unificado = false; syncNow();
+};
 $('#ghDisconnect').onclick = () => {
   if (!confirm('¿Desconectar GitHub en este celu? Tus datos siguen acá y en el Gist.')) return;
   setGhConfig({}); renderAjustes(); ghStatus('Desconectado.');
