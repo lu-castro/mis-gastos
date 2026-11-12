@@ -4,12 +4,19 @@
 // Usa las funciones y datos de app.js (se carga antes, pero solo se llama después).
 
 const ASESOR_NOMBRE = 'Benito';
-const DEFAULT_CONFIG = { metaAhorro: 15, abrirChatAlInicio: false };
-const MAX_PASOS_ACTIVOS = 5;
+// Pensado para Argentina: meta de ahorro modesta, inflación en las comparaciones y tono tranqui.
+const DEFAULT_CONFIG = { metaAhorro: 10, abrirChatAlInicio: false, inflacion: 2 };
+const MAX_PASOS_ACTIVOS = 3;
+// Gastos chicos que no son "hormiga": son necesarios (colectivo, farmacia, servicios…)
+const ESENCIALES = ['MONOTRIBUTO', 'SALUD', 'TRANSPORTE', 'SERVICIO', 'HOGAR'];
 
 function cfg() { return { ...DEFAULT_CONFIG, ...(data.config || {}) }; }
 function setCfg(cambios) { data.config = { ...cfg(), ...cambios, configMod: Date.now() }; save(); }
 
+// Inflación mensual estimada (ej. 0.02). Sirve para comparar meses sin culparte por los aumentos.
+const infl = () => Math.max(0, Number(cfg().inflacion) || 0) / 100;
+// Lo que gastaste el mes pasado, llevado a precios de hoy
+const ajustado = v => v * (1 + infl());
 const sum = list => list.reduce((a, g) => a + g.monto, 0);
 const r1k = n => Math.max(0, Math.round(n / 1000) * 1000);
 const pct = n => Math.round(n) + '%';
@@ -28,7 +35,7 @@ function metricas(key, hastaDia) {
   const porCat = {};
   for (const g of varList) porCat[g.categoria] = (porCat[g.categoria] || 0) + g.monto;
   const umbralHormiga = Math.max(5000, r1k(ingresos * 0.01));
-  const hormiga = varList.filter(g => g.monto < umbralHormiga);
+  const hormiga = varList.filter(g => g.monto < umbralHormiga && !ESENCIALES.includes(g.categoria));
   const finde = varList.filter(g => { const d = new Date(g.fecha + 'T12:00').getDay(); return d === 0 || d === 6; });
   const mayor = varList.slice().sort((a, b) => b.monto - a.monto)[0] || null;
   return {
@@ -43,13 +50,41 @@ function metricas(key, hastaDia) {
   };
 }
 
+// Compara dos montos de meses distintos descontando la inflación.
+function compararConInflacion(ahora, antes, mesAntes) {
+  const nominal = ((ahora - antes) / antes) * 100;
+  const real = ((ahora - ajustado(antes)) / ajustado(antes)) * 100;
+  const base = `Gastaste ${money(ahora)}; en ${mesAntes} fueron ${money(antes)}`;
+  if (!infl()) return `${base} (${nominal >= 0 ? '+' : ''}${pct(nominal)}).`;
+  if (Math.abs(real) < 3) return `${base}. Descontando la inflación (~${cfg().inflacion}%), gastaste prácticamente lo mismo.`;
+  return `${base}. Descontando la inflación (~${cfg().inflacion}%), eso es un ${pct(Math.abs(real))} ${real > 0 ? 'más' : 'menos'} de verdad.`;
+}
+
+// El número "por día" que conviene mostrar. Si apartar el ahorro deja un monto ridículo,
+// muestro el realista (sin ahorro) y menciono el otro como opción, sin presionar.
+function numeroDelDia(p) {
+  const meta = cfg().metaAhorro;
+  if (meta > 0 && p.presupuestoDia > 0 && p.presupuestoDia >= p.presupuestoDiaLibre * 0.5) {
+    return { monto: p.presupuestoDia, conAhorro: true, extra: '' };
+  }
+  return {
+    monto: Math.max(p.presupuestoDiaLibre, 0), conAhorro: false,
+    extra: meta > 0 && p.presupuestoDiaLibre > 0
+      ? (p.presupuestoDia > 0
+        ? `Para llegar a tu ${meta}% de ahorro serían ~${money(p.presupuestoDia)} por día: si este mes no da, priorizá cerrar tranqui.`
+        : `Este mes el ${meta}% de ahorro no entra, y está bien: con los aumentos pasa. Lo que sobre, suma.`)
+      : '',
+  };
+}
+
 // Proyección del mes en curso
 function proyeccion() {
   const key = nowKey();
   const dim = daysInMonth(key), dia = new Date().getDate(), quedan = dim - dia + 1;
   const mt = metricas(key);
   const prev = metricas(shiftMonth(key, -1));
-  const fijosEsperados = Math.max(mt.fijos, prev.fijos);
+  // Los fijos suelen aumentar: espero al menos lo del mes pasado más la inflación
+  const fijosEsperados = Math.max(mt.fijos, prev.fijos ? ajustado(prev.fijos) : 0);
   const varPorDia = dia ? mt.variables / dia : 0;
   const gastoProyectado = fijosEsperados + varPorDia * dim;
   const metaMonto = mt.ingresos * cfg().metaAhorro / 100;
@@ -58,6 +93,8 @@ function proyeccion() {
     key, dim, dia, quedan, mt, prev, fijosEsperados, varPorDia, metaMonto,
     ahorroProyectado: mt.ingresos - gastoProyectado,
     presupuestoDia: disponibleVariable / quedan,
+    // Sin apartar ahorro: lo que hay por día para no terminar en negativo
+    presupuestoDiaLibre: (disponibleVariable + metaMonto) / quedan,
     hoy: sum(peekMonth(key).gastos.filter(g => g.fecha === todayISO() && !g.fijo)),
   };
 }
@@ -79,7 +116,7 @@ function progresoPaso(p, key) {
   if (p.tipo === 'ahorro') {
     if (!mt.ingresos) return null;
     if (key === nowKey()) {
-      if (new Date().getDate() < 7) return { valor: 0, meta: p.meta, ok: true, texto: 'es temprano para medirlo; separá tu ahorro apenas cobres' };
+      if (new Date().getDate() < 7) return { valor: 0, meta: p.meta, ok: true, texto: 'es temprano para medirlo; si podés, separá algo apenas cobres' };
       const proy = (proyeccion().ahorroProyectado / mt.ingresos) * 100;
       return { valor: proy, meta: p.meta, ok: proy >= p.meta, texto: `vas camino a ahorrar ${pct(proy)} (meta ${p.meta}%)` };
     }
@@ -103,63 +140,64 @@ function candidatosPasos(mt, prevMt) {
   const meta = cfg().metaAhorro;
   const c = [];
   const fmtCat = s => esc(s);
-  if (mt.ingresos && mt.tasa < meta) {
+  // Meta realista: si este mes no se pudo, propongo un escalón alcanzable, no el ideal.
+  if (meta > 0 && mt.ingresos && mt.tasa < meta) {
+    const escalon = mt.tasa <= 0 ? Math.min(meta, 3) : Math.min(meta, Math.max(3, Math.round(mt.tasa) + 2));
     c.push({
-      tipo: 'ahorro', meta, prioridad: 100,
-      texto: `Pagate primero: apenas cobres, separá el ${meta}% (≈ ${money(r1k(mt.ingresos * meta / 100))}) a tu ahorro`,
-      porque: `Este mes ahorraste ${pct(Math.max(mt.tasa, 0))}. Lo que se separa al principio no se gasta.`,
+      tipo: 'ahorro', meta: escalon, prioridad: 100,
+      texto: escalon < meta
+        ? `Separar un ${escalon}% apenas cobres (≈ ${money(r1k(mt.ingresos * escalon / 100))}), aunque sea poquito`
+        : `Pagate primero: apenas cobres, separá el ${meta}% (≈ ${money(r1k(mt.ingresos * meta / 100))})`,
+      porque: mt.tasa <= 0
+        ? 'Con los precios como están, cerrar el mes ya es un logro. Empezamos por algo chico y subimos de a poco.'
+        : `Este mes ahorraste ${pct(mt.tasa)}. Subir de a poquito es más sostenible que un salto grande.`,
     });
   }
-  const cats = Object.entries(mt.porCat).sort((a, b) => b[1] - a[1]);
-  for (const [cat, v] of cats.slice(0, 2)) {
+  const cats = Object.entries(mt.porCat).filter(([cat]) => !ESENCIALES.includes(cat)).sort((a, b) => b[1] - a[1]);
+  for (const [cat, v] of cats.slice(0, 1)) {
     const share = mt.variables ? (v / mt.variables) * 100 : 0;
     const antes = prevMt.porCat[cat] || 0;
-    const crecio = antes > 0 && v > antes * 1.2;
-    if (share >= 25 || crecio) {
-      const tope = r1k(v * 0.9);
+    // "Creció" en serio: más que la inflación y un 20% extra
+    const crecio = antes > 0 && v > ajustado(antes) * 1.2;
+    if (share >= 30 || crecio) {
+      // El techo acompaña la inflación: no es gastar menos pesos, es no gastar más de verdad
+      const tope = r1k(ajustado(v) * 0.95);
       c.push({
         tipo: 'tope', categoria: cat, meta: tope, prioridad: crecio ? 90 : 80,
-        texto: `Ponerle techo a ${fmtCat(cat)}: máximo ${money(tope)} en el mes`,
+        texto: `Un techo para ${fmtCat(cat)}: hasta ${money(tope)} en el mes`,
         porque: crecio
-          ? `Subió de ${money(antes)} a ${money(v)} respecto al mes anterior.`
-          : `Es el ${pct(share)} de tus gastos variables (${money(v)}). Un 10% menos ya se nota.`,
+          ? `Subió de ${money(antes)} a ${money(v)}, bastante más que la inflación. El techo ya contempla los aumentos.`
+          : `Es el ${pct(share)} de tus gastos variables (${money(v)}). El techo ya incluye la inflación, así que es un ajuste suave.`,
       });
     }
   }
-  if (mt.hormigaN >= 8 || (mt.ingresos && mt.hormigaTotal >= mt.ingresos * 0.05)) {
-    const metaN = Math.max(3, Math.floor(mt.hormigaN * 0.7));
+  if (mt.ingresos && mt.hormigaTotal >= mt.ingresos * 0.1) {
+    const metaN = Math.max(5, Math.floor(mt.hormigaN * 0.8));
     c.push({
       tipo: 'hormiga', meta: metaN, umbral: mt.umbralHormiga, prioridad: 70,
-      texto: `Gastos hormiga: como máximo ${metaN} compras chicas (menos de ${money(mt.umbralHormiga)})`,
-      porque: `Hiciste ${mt.hormigaN} que sumaron ${money(mt.hormigaTotal)}. De a poquito se van montones.`,
+      texto: `Gustitos chicos: hasta ${metaN} en el mes (de menos de ${money(mt.umbralHormiga)})`,
+      porque: `Sumaron ${money(mt.hormigaTotal)}, un ${pct((mt.hormigaTotal / mt.ingresos) * 100)} de lo que entra. No hace falta eliminarlos, solo elegirlos.`,
     });
   }
-  if (mt.ingresos && mt.fijos / mt.ingresos > 0.5) {
+  if (mt.ingresos && mt.fijos / mt.ingresos > 0.65) {
     c.push({
       tipo: 'manual', categoria: 'fijos', prioridad: 60,
-      texto: 'Revisar los gastos fijos: elegí una suscripción o servicio para bajar de plan o dar de baja',
-      porque: `Tus fijos se llevan el ${pct((mt.fijos / mt.ingresos) * 100)} de lo que entra. Bajar un fijo te ahorra todos los meses.`,
-    });
-  }
-  if (mt.findeShare > 45 && mt.variables > 0) {
-    c.push({
-      tipo: 'manual', categoria: 'finde', prioridad: 50,
-      texto: 'Armar un presupuesto para los findes antes de que empiecen',
-      porque: `El ${pct(mt.findeShare)} de tus gastos variables fue en fin de semana.`,
+      texto: 'Revisar un solo gasto fijo: una suscripción, el plan del celu o la prepaga',
+      porque: `Tus fijos son el ${pct((mt.fijos / mt.ingresos) * 100)} de lo que entra. Es muy común en Argentina con los aumentos; bajar uno solo ya te da aire todos los meses.`,
     });
   }
   if (!data.ahorros.some(a => a.monto > 0)) {
     c.push({
       tipo: 'manual', categoria: 'emergencia', prioridad: 40,
-      texto: 'Empezar un fondo de emergencia, aunque sea con poco',
-      porque: 'Tener un colchón evita endeudarte cuando aparece un imprevisto.',
+      texto: 'Empezar un colchón para imprevistos, aunque sea con muy poco',
+      porque: 'No importa el monto: tener algo guardado evita recurrir a la tarjeta cuando aparece un imprevisto.',
     });
   }
-  if (mt.ingresos && mt.tasa >= meta + 5) {
+  if (mt.ingresos && meta > 0 && mt.tasa >= meta + 5) {
     c.push({
       tipo: 'manual', categoria: 'subir-meta', prioridad: 30,
-      texto: `Subir tu meta de ahorro al ${meta + 2}% (en Ajustes)`,
-      porque: `Ahorraste ${pct(mt.tasa)}, más que tu meta del ${meta}%. ¡Podés más!`,
+      texto: `Si te queda cómodo, subir la meta al ${meta + 2}% (en Ajustes)`,
+      porque: `Ahorraste ${pct(mt.tasa)}, más que tu meta del ${meta}%. Solo si no te ajusta.`,
     });
   }
   if (!mt.hayFijosMarcados && mt.cantidad >= 3) {
@@ -179,27 +217,21 @@ function armarInforme(key) {
   const meta = cfg().metaAhorro;
   const hallazgos = [];
 
-  if (prevMt.gastado) {
-    const d = ((mt.gastado - prevMt.gastado) / prevMt.gastado) * 100;
-    hallazgos.push(Math.abs(d) < 3
-      ? `Gastaste parecido al mes anterior (${money(mt.gastado)}).`
-      : `Gastaste ${pct(Math.abs(d))} ${d > 0 ? 'más' : 'menos'} que en ${mesCorto(prevMt.key)} (${money(prevMt.gastado)} → ${money(mt.gastado)}).`);
-  }
+  if (prevMt.gastado) hallazgos.push(compararConInflacion(mt.gastado, prevMt.gastado, mesCorto(prevMt.key)));
   const cats = Object.entries(mt.porCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
   if (cats.length) {
     hallazgos.push('Donde más se fue la plata (sin contar fijos): ' + cats.map(([c, v]) =>
       `<b>${esc(c)}</b> ${money(v)}`).join(', ') + '.');
   }
-  if (mt.ingresos && mt.fijos) hallazgos.push(`Los gastos fijos fueron el ${pct((mt.fijos / mt.ingresos) * 100)} de tus ingresos.`);
-  if (mt.hormigaN) hallazgos.push(`Hiciste ${mt.hormigaN} gastos chicos (menos de ${money(mt.umbralHormiga)}) que suman ${money(mt.hormigaTotal)}.`);
-  if (mt.findeShare > 35) hallazgos.push(`El ${pct(mt.findeShare)} de los gastos variables fue en fines de semana.`);
+  if (mt.ingresos && mt.fijos) hallazgos.push(`Los gastos fijos fueron el ${pct((mt.fijos / mt.ingresos) * 100)} de tus ingresos${mt.fijos / mt.ingresos > 0.5 ? ' (alquiler, servicios y demás pesan mucho hoy en día, no es solo tuyo)' : ''}.`);
+  if (mt.ingresos && mt.hormigaTotal >= mt.ingresos * 0.05) hallazgos.push(`Los gustitos chicos (menos de ${money(mt.umbralHormiga)}, sin contar transporte, salud ni servicios) sumaron ${money(mt.hormigaTotal)}.`);
   if (mt.mayor) hallazgos.push(`Tu gasto variable más grande: ${money(mt.mayor.monto)} en ${esc(mt.mayor.nota || mt.mayor.categoria)}.`);
 
   let titular, mood;
   if (!mt.ingresos) { titular = 'No cargaste ingresos este mes, así que no puedo medir cuánto ahorraste.'; mood = 'pensando'; }
-  else if (mt.ahorro < 0) { titular = `Mes en rojo: gastaste ${money(-mt.ahorro)} más de lo que entró. Vamos a ajustar.`; mood = 'alerta'; }
-  else if (mt.tasa < meta) { titular = `Ahorraste ${money(mt.ahorro)} (${pct(mt.tasa)}). Cerca de tu meta del ${meta}%: con un par de ajustes llegás.`; mood = 'atento'; }
-  else { titular = `¡Muy bien! Ahorraste ${money(mt.ahorro)} (${pct(mt.tasa)}), por encima de tu meta del ${meta}%.`; mood = 'feliz'; }
+  else if (mt.ahorro < 0) { titular = `Este mes salieron ${money(-mt.ahorro)} más de lo que entró. Con los precios como están, le pasa a mucha gente: no es para culparse, lo vamos acomodando de a poco.`; mood = 'atento'; }
+  else if (meta > 0 && mt.tasa < meta) { titular = `Cerraste el mes con ${money(mt.ahorro)} a favor (${pct(mt.tasa)}). No llegaste al ${meta}%, pero terminar en positivo ya vale. 👏`; mood = 'feliz'; }
+  else { titular = `¡Muy bien! Te sobraron ${money(mt.ahorro)} (${pct(mt.tasa)})${meta > 0 ? `, por encima de tu meta del ${meta}%` : ''}.`; mood = 'feliz'; }
 
   return {
     mes: key, mood, titular, hallazgos,
@@ -283,54 +315,33 @@ function mensajesAlAbrir() {
     return msgs;
   }
 
-  // Ritmo del mes
-  if (p.dia <= 5) {
-    msgs.push({ mood: 'feliz', texto: `${sinVer ? '' : saludo + ' '}Arranca el mes: el mejor momento para <b>pagarte primero</b>. Separá ${money(r1k(p.metaMonto))} (tu ${meta}%) a tu ahorro antes de gastar. Después, tenés ${money(Math.max(p.presupuestoDia, 0))} por día para tus gastos variables.` });
-  } else if (p.ahorroProyectado < 0) {
-    msgs.push({ mood: 'alerta', texto: `Ojo: a este ritmo (${money(p.varPorDia)} por día en variables) terminás el mes <b>${money(-p.ahorroProyectado)} en rojo</b>. Para cumplir tu meta, bajá a ${money(Math.max(p.presupuestoDia, 0))} por día en lo que queda.` });
-  } else if (p.ahorroProyectado < p.metaMonto) {
-    msgs.push({ mood: 'atento', texto: `Venís bien, pero todavía no llegás a tu meta: proyecto que ahorrás ${money(p.ahorroProyectado)} (${pct((p.ahorroProyectado / mt.ingresos) * 100)}) y tu meta es ${meta}%. Si bajás a <b>${money(Math.max(p.presupuestoDia, 0))} por día</b>, la cumplís.` });
+  // Ritmo del mes: siempre con un número para hoy, nunca con reto
+  const hola = sinVer ? '' : saludo + ' ';
+  const nd = numeroDelDia(p);
+  if (nd.monto > 0 && p.dia <= 5 && meta > 0) {
+    msgs.push({ mood: 'feliz', texto: `${hola}Arranca el mes. Si podés, separá ${money(r1k(p.metaMonto))} (tu ${meta}%) apenas cobres; si este mes no da, no pasa nada. Para el día a día tenés ~<b>${money(nd.monto)} por día</b>.` });
+  } else if (nd.conAhorro) {
+    msgs.push({ mood: 'feliz', texto: `${hola}Venís bien. Para lo que queda del mes tenés ~<b>${money(nd.monto)} por día</b> para gastos variables, ya contando tu ahorro.` });
+  } else if (nd.monto > 0) {
+    msgs.push({ mood: meta > 0 ? 'pensando' : 'feliz', texto: `${hola}${meta > 0 ? 'El mes viene un poco justo (pasa mucho con los aumentos). ' : ''}Para cerrar el mes sin quedar en negativo tenés ~<b>${money(nd.monto)} por día</b>.${nd.extra ? ' ' + nd.extra : ''}` });
   } else {
-    msgs.push({ mood: 'feliz', texto: `${sinVer ? '' : saludo + ' '}¡Vas bárbaro! Si seguís así, ahorrás ${money(p.ahorroProyectado)} este mes (${pct((p.ahorroProyectado / mt.ingresos) * 100)}). Podés gastar hasta <b>${money(Math.max(p.presupuestoDia, 0))} por día</b> y seguís cumpliendo.` });
+    msgs.push({ mood: 'pensando', texto: `${hola}Este mes los gastos ya alcanzaron a lo que entró. Tranqui: priorizá lo esencial (comida, transporte, salud) y el mes que viene lo encaramos juntos. Si entra alguna plata extra, cargala en <b>Ingresos</b>.` });
   }
 
-  if (p.hoy > 0 && p.presupuestoDia > 0) {
-    msgs.push(p.hoy > p.presupuestoDia
-      ? { mood: 'atento', texto: `Hoy ya gastaste ${money(p.hoy)}, más que tu presupuesto diario (${money(p.presupuestoDia)}). Mañana intentá un día "sin gastos" para compensar.` }
-      : { mood: 'feliz', texto: `Hoy llevás ${money(p.hoy)} de ${money(p.presupuestoDia)}. Te quedan ${money(p.presupuestoDia - p.hoy)} para hoy.` });
-  }
-
-  // Plan de mejora en curso
+  // Plan de mejora en curso: solo comento lo que viene bien o un aviso amable
   for (const paso of pasosActivos()) {
     if (paso.desde > p.key) continue;
     const pr = progresoPaso(paso, p.key);
-    if (!pr) continue;
-    if (paso.tipo === 'tope') {
-      const usado = paso.meta ? (pr.valor / paso.meta) * 100 : 0;
-      const esperado = (p.dia / p.dim) * 100;
-      if (usado > 100) msgs.push({ mood: 'alerta', texto: `Tu techo de <b>${esc(paso.categoria)}</b> era ${money(paso.meta)} y ya vas ${money(pr.valor)}. Lo que queda del mes, mejor nada más ahí.` });
-      else if (usado > esperado + 15) msgs.push({ mood: 'atento', texto: `En <b>${esc(paso.categoria)}</b> ya usaste el ${pct(usado)} de tu techo y vamos por el ${pct(esperado)} del mes. Frená un poco.` });
-      else if (p.dia > 10) msgs.push({ mood: 'feliz', texto: `Tu techo de <b>${esc(paso.categoria)}</b> viene bien: ${pr.texto}.` });
-    }
-    if (paso.tipo === 'hormiga' && pr.valor >= 3 && pr.valor > paso.meta * (p.dia / p.dim) * 1.5) {
-      msgs.push({ mood: 'atento', texto: `Ya van ${pr.valor} gastos chicos este mes (tu límite es ${paso.meta}). ¿Alguno se podía evitar?` });
-    }
+    if (!pr || paso.tipo !== 'tope') continue;
+    const usado = paso.meta ? (pr.valor / paso.meta) * 100 : 0;
+    const esperado = (p.dia / p.dim) * 100;
+    if (usado > 100) msgs.push({ mood: 'pensando', texto: `En <b>${esc(paso.categoria)}</b> ya pasaste el techo que nos habíamos puesto (${pr.texto}). No pasa nada: el mes que viene lo ajustamos a algo más realista si hace falta.` });
+    else if (usado > esperado + 25) msgs.push({ mood: 'pensando', texto: `En <b>${esc(paso.categoria)}</b> vas ${pr.texto}. Solo para que lo tengas en cuenta.` });
+    else if (p.dia > 10) msgs.push({ mood: 'feliz', texto: `Tu techo de <b>${esc(paso.categoria)}</b> viene bien: ${pr.texto}. 👌` });
   }
 
-  // Comparación con el mes pasado a esta altura
-  const prevHasta = metricas(shiftMonth(p.key, -1), p.dia);
-  let peor = null;
-  for (const [cat, v] of Object.entries(mt.porCat)) {
-    const antes = prevHasta.porCat[cat] || 0;
-    if (antes > 0 && v > antes * 1.3 && v - antes > 10000 && (!peor || v - antes > peor.dif)) peor = { cat, v, antes, dif: v - antes };
-  }
-  if (peor) msgs.push({ mood: 'pensando', texto: `En <b>${esc(peor.cat)}</b> llevás ${money(peor.v)}; a esta altura del mes pasado ibas ${money(peor.antes)}. ¿Pasó algo puntual?` });
-
-  if (mt.hormigaN >= 6 && mt.hormigaTotal > mt.ingresos * 0.03) {
-    msgs.push({ mood: 'pensando', texto: `Tenés ${mt.hormigaN} gastos chicos que ya suman ${money(mt.hormigaTotal)}. Los "gastos hormiga" son los más fáciles de recortar.` });
-  }
   if (p.quedan <= 3 && p.ahorroProyectado > 0) {
-    msgs.push({ mood: 'feliz', texto: `Faltan ${p.quedan} día${p.quedan > 1 ? 's' : ''} para cerrar el mes. Si aguantás, ahorrás ~${money(p.ahorroProyectado)}. Pasalo a tu cuenta de ahorro así no se mezcla.` });
+    msgs.push({ mood: 'feliz', texto: `Faltan ${p.quedan} día${p.quedan > 1 ? 's' : ''} para cerrar el mes y vas a terminar con algo a favor (~${money(p.ahorroProyectado)}). ¡Bien ahí!` });
   }
   if (!mt.hayFijosMarcados && mt.cantidad >= 3) {
     msgs.push({ mood: 'pensando', texto: 'Tip: marcá como <b>fijo</b> el alquiler, las expensas y los servicios al cargarlos. Así separo lo que no podés tocar de lo que sí.' });
@@ -348,18 +359,10 @@ function reaccionGasto(g) {
   }
   const p = proyeccion();
   if (!p.mt.ingresos) return { mood: 'pensando', texto: 'Anotado. Cargá tus ingresos así te digo cómo venís.' };
-  const tope = pasosActivos().find(x => x.tipo === 'tope' && x.categoria === g.categoria && x.desde <= p.key);
-  if (tope) {
-    const v = p.mt.porCat[g.categoria] || 0;
-    if (v > tope.meta) return { mood: 'alerta', texto: `Con esto pasaste tu techo de ${esc(g.categoria)}: ${money(v)} de ${money(tope.meta)}.` };
-    return { mood: v > tope.meta * 0.8 ? 'atento' : 'feliz', texto: `Anotado. En ${esc(g.categoria)} vas ${money(v)} de tu techo de ${money(tope.meta)}.` };
-  }
-  if (p.presupuestoDia <= 0) return { mood: 'alerta', texto: `Anotado. Ojo: ya no queda margen para tu meta de ahorro este mes. Lo que sigue, solo lo necesario.` };
-  if (g.monto > p.presupuestoDia * 1.5) {
-    return { mood: 'atento', texto: `Es un gasto grande para tu ritmo: equivale a ${(g.monto / p.presupuestoDia).toFixed(1).replace('.', ',')} días de presupuesto. Ahora tenés ${money(p.presupuestoDia)} por día.` };
-  }
-  if (p.hoy > p.presupuestoDia) return { mood: 'atento', texto: `Anotado. Hoy ya vas ${money(p.hoy)}, arriba de tu presupuesto diario de ${money(p.presupuestoDia)}.` };
-  return { mood: 'feliz', texto: `Anotado. Te quedan ${money(p.presupuestoDia)} por día para cumplir tu meta.` };
+  // Sin retos: confirmo y, si sirve, doy el número actualizado
+  const nd = numeroDelDia(p);
+  if (nd.monto > 0) return { mood: 'feliz', texto: `Anotado ✅ Para lo que queda del mes tenés ~${money(nd.monto)} por día.` };
+  return { mood: 'feliz', texto: 'Anotado ✅' };
 }
 
 // ---------- Personaje ----------
@@ -404,19 +407,17 @@ function crearPersonaje() {
   document.body.append(btn);
 }
 
+// Benito siempre con cara amable: nada de cejas de enojo
 function moodActual() {
-  const m = mensajesAlAbrir();
-  return m.some(x => x.mood === 'alerta') ? 'alerta' : m.some(x => x.mood === 'atento') ? 'atento' : 'feliz';
+  return mensajesAlAbrir().some(x => x.mood === 'pensando') ? 'pensando' : 'feliz';
 }
 
-// Puntito: hay un informe sin ver, un comentario guardado o todavía no hablaron hoy.
+// Puntito: solo cuando hay algo nuevo de verdad (un informe sin ver). Nada de avisos diarios.
 function actualizarAviso() {
   const aviso = $('#buhoAviso');
   if (!aviso) return;
-  const n = chatPendientes.length + Object.values(data.informes).filter(i => !i.visto).length;
-  let hoy = null;
-  try { hoy = localStorage.getItem('benito-ultimo-dia'); } catch (e) { /* ignore */ }
-  aviso.hidden = !n && hoy === todayISO();
+  const n = Object.values(data.informes).filter(i => !i.visto).length;
+  aviso.hidden = !n;
   aviso.textContent = n ? String(n) : '';
   $('#buho').dataset.mood = moodActual();
 }
@@ -428,7 +429,7 @@ function renderPlanInformes() {
   const logrados = data.pasos.filter(p => p.estado === 'logrado');
   $('#planList').innerHTML = activos.length ? activos.map(p => {
     const pr = p.desde <= key ? progresoPaso(p, key) : null;
-    const racha = Object.keys(p.historial || {}).sort().map(k => p.historial[k] ? '✅' : '❌').join('');
+    const racha = Object.keys(p.historial || {}).sort().map(k => p.historial[k] ? '✅' : '🔸').join('');
     let barra = '';
     if (pr && p.tipo !== 'ahorro') {
       const w = Math.min(100, p.meta ? (pr.valor / p.meta) * 100 : 0);
@@ -460,6 +461,7 @@ function renderPlanInformes() {
 function renderAjustesAsesor() {
   const c = cfg();
   if (document.activeElement !== $('#metaAhorro')) $('#metaAhorro').value = c.metaAhorro;
+  if (document.activeElement !== $('#inflacion')) $('#inflacion').value = String(c.inflacion).replace('.', ',');
   $('#hablarAlAbrir').checked = c.abrirChatAlInicio;
 }
 
@@ -473,7 +475,7 @@ function abrirInforme(key, { preliminar = false } = {}) {
   const k = inf.kpis;
   const evals = inf.evaluacion.map(ev => {
     const p = data.pasos.find(x => x.id === ev.id);
-    return p ? `<li>${ev.ok ? '✅' : '❌'} ${p.texto}<div class="paso-s">${ev.detalle}</div></li>` : '';
+    return p ? `<li>${ev.ok ? '✅' : '🔸 Esta vez no:'} ${p.texto}<div class="paso-s">${ev.detalle}</div></li>` : '';
   }).join('');
   const pasosLista = preliminar
     ? armarInforme(key).candidatos.slice(0, 3).map(c => `<li>${c.texto}<div class="paso-s">${c.porque}</div></li>`).join('')
@@ -524,9 +526,18 @@ function initAsesor() {
   };
   $('#metaAhorro').onchange = e => {
     const v = Math.round(Number(e.target.value));
-    if (!(v >= 1 && v <= 80)) { toast('Poné un número entre 1 y 80'); return renderAjustesAsesor(); }
-    setCfg({ metaAhorro: v }); toast('Meta de ahorro: ' + v + '%');
+    if (!(v >= 0 && v <= 80)) { toast('Poné un número entre 0 y 80'); return renderAjustesAsesor(); }
+    setCfg({ metaAhorro: v }); toast(v ? 'Meta de ahorro: ' + v + '%' : 'Sin meta de ahorro por ahora');
   };
+  $('#inflacion').onchange = e => {
+    const v = Number(String(e.target.value).replace(',', '.'));
+    if (!(v >= 0 && v <= 30)) { toast('Poné un número entre 0 y 30'); return renderAjustesAsesor(); }
+    setCfg({ inflacion: Math.round(v * 10) / 10 }); toast('Inflación mensual: ' + String(v).replace('.', ',') + '%');
+  };
+  // La meta vieja por defecto (15%) era exigente: la paso una sola vez al 10% nuevo.
+  if (data.config && !data.config.ajusteArg) {
+    setCfg(data.config.metaAhorro === 15 ? { metaAhorro: 10, ajusteArg: true } : { ajusteArg: true });
+  }
   $('#hablarAlAbrir').onchange = e => setCfg({ abrirChatAlInicio: e.target.checked });
 }
 

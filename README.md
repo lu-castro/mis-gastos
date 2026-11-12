@@ -23,7 +23,10 @@ Es 100% gratis: se publica con GitHub Pages y los datos quedan guardados en el c
 - **Informe de fin de mes**: se arma solo cuando termina el mes, con lo que pasó y
   próximos pasos concretos. Los pasos se acumulan en **Resumen → Tu plan de mejora**:
   cada mes se evalúan (✅/❌) y, si cumplís uno dos meses seguidos, pasa a "hábito logrado".
-- La meta de ahorro (15% por defecto) y si Benito te habla al abrir se cambian en **Ajustes**.
+- Benito está pensado para Argentina: compara meses descontando la inflación (la cargás en **Ajustes**),
+  no cuenta como "gasto hormiga" el colectivo, la farmacia ni los servicios, sugiere cuotas sin interés
+  cuando conviene y nunca te reta: si un mes viene justo, te dice cuánto tenés por día para cerrarlo tranqui.
+- La meta de ahorro (10% por defecto, podés poner 0) y si Benito te habla al abrir se cambian en **Ajustes**.
 
 Todo el análisis lo hace la app en tu dispositivo: no usa servicios pagos ni manda tus datos a nadie.
 Son sugerencias para organizar tu presupuesto, no asesoramiento financiero profesional.
